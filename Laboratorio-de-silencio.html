@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Audição interna — laboratório de silêncio</title>
+<style>
+:root{color-scheme:dark;font:17px/1.6 system-ui;background:#101921;color:#eaf1ed}body{max-width:760px;margin:40px auto;padding:0 22px}h1{line-height:1.2;font-size:2.3rem}h2{font-size:1.2rem}small,.muted{color:#b4c9c5}section{background:#1b2a32;padding:22px;border-radius:18px;margin:20px 0}button,select{font:inherit;border-radius:9px;padding:10px 15px;margin:5px;border:1px solid #75928b;background:#243d43;color:inherit}button:enabled{cursor:pointer}button:disabled{opacity:.4}button:focus-visible{outline:3px solid #ead28a}.main{background:#b8e3cf;color:#13251e}.pulse{display:flex;gap:8px;margin:22px 0}.dot{flex:1;text-align:center;border-radius:7px;background:#31434c;padding:10px 0}.active{background:#ead28a;color:#15262b}.hidden{border:1px dashed #b4c9c5}#status{min-height:65px}a{color:#b8e3cf}input{vertical-align:middle}summary{cursor:pointer}footer{font-size:.85rem}
+</style>
+<h1>Laboratório de silêncio</h1>
+<p>Escute uma frase. Continue mentalmente quando o som desaparecer. Depois, compare a nota de conferência com a última nota que você esperava.</p>
+<p class="muted">Protótipo experimental, sem eficácia clínica ou pedagógica estabelecida. O desempenho mede esta tarefa de memória e previsão; não comprova escuta interna de obras inteiras.</p>
+<section>
+<label>Modo <select id="mode"><option value="train">Prática adaptativa — 12 tentativas</option><option value="test">Sondagem fixa — 12 tentativas</option></select></label>
+<p>Use volume confortável. Cada nota dura 0,5 s. Os quadrados mantêm o pulso mesmo no silêncio. A nota de conferência vem depois dos oito pulsos.</p>
+<label>Volume <input id="volume" type="range" min="0" max="0.3" step="0.01" value="0.10"></label>
+<div><button id="new" class="main">Começar sessão</button><button id="stop" disabled>Interromper áudio</button></div>
+<div class="pulse" id="pulse" aria-hidden="true"></div>
+<p id="status" role="status" aria-live="polite">A sessão só começa quando você clicar.</p>
+<button id="reference" disabled>1. Ouvir frase completa</button>
+<button id="masked" disabled>2. Ouvir com silêncio</button>
+<div><button id="same" disabled>Conferência igual à última nota</button><button id="different" disabled>Conferência diferente</button></div>
+<button id="next" disabled>Próxima tentativa</button>
+<p id="score"></p>
+</section>
+<section><h2>O que fazer durante o silêncio</h2><p>Continue a frase em sua mente, no mesmo pulso. Não procure apenas lembrar o nome da nota. Antes da conferência, tente antecipar o som de chegada. A conferência pode repetir esse som ou trazer um grau vizinho.</p><p>Na prática, três acertos consecutivos aumentam o silêncio em uma nota; um erro o reduz. É uma regra inicial de ajuste, não um limiar de aprendizagem validado. Na sondagem, sempre faltam quatro notas e o resultado aparece apenas ao final.</p><p>Uma sessão tem 12 tentativas, com frases novas. Não aumente o número de sessões para compensar um resultado ruim. Pare se houver fadiga.</p></section>
+<details><summary>Limites e registro dos resultados</summary><p>Você pode acertar usando memória da nota final, sem reconstruir toda a frase. Por isso, combine esta tarefa com uma verificação fora do aplicativo: crie e grave uma frase curta antes de escrevê-la no MuseScore. Melhorar apenas aqui não demonstra transferência para composição.</p><p>A sondagem tem poucas tentativas, respostas binárias e chance de acerto de 50%; pequenas diferenças não demonstram melhora. Os resultados não são enviados a servidores. A página guarda no navegador apenas o histórico das sessões concluídas, quando o navegador permite.</p></details>
+<section><h2>Histórico local</h2><pre id="history" style="white-space:pre-wrap"></pre><button id="export">Baixar resultados JSON</button></section>
+<footer>Sem microfone, conta, dependências externas ou conexão necessária. Som sintetizado, não gravação de instrumento. Não é uma ferramenta de diagnóstico.</footer>
+<script>
+(function(root){
+  'use strict';
+  const scale=[60,62,64,65,67,69,71,72,74,76,77,79];
+  function trial(gap=2,rng=Math.random){
+    let degree=3+Math.floor(rng()*3), notes=[];
+    for(let i=0;i<8;i++){
+      notes.push(scale[degree]);
+      degree=Math.max(0,Math.min(scale.length-1,degree+(rng()<.5?-1:1)));
+    }
+    const same=rng()<.5;
+    const end=scale.indexOf(notes[7]);
+    const other=end===0?1:end===scale.length-1?end-1:end+(rng()<.5?-1:1);
+    return {notes,gap:Math.max(1,Math.min(6,gap)),same,probe:same?notes[7]:scale[other]};
+  }
+  function adapt(gap,streak,correct){
+    if(!correct)return {gap:Math.max(1,gap-1),streak:0};
+    if(streak+1>=3)return {gap:Math.min(6,gap+1),streak:0};
+    return {gap,streak:streak+1};
+  }
+  const api={trial,adapt};
+  if(typeof module!=='undefined')module.exports=api;
+  root.Audicao=api;
+})(typeof globalThis!=='undefined'?globalThis:this);
+
+</script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let ctx,oscillators=[],timers=[],current,phase='idle',gap=2,streak=0,records=[],history=[],mode='train';
+try{history=JSON.parse(localStorage.getItem('audicao-sessions')||'[]');if(!Array.isArray(history))history=[];}catch(e){history=[];}
+function historyView(){$('history').textContent=history.map(x=>`${x.date} | ${x.mode==='train'?'Prática':'Sondagem'} | ${x.correct}/${x.total}`).join('\n')||'Nenhuma sessão concluída.';}
+historyView();
+for(let i=0;i<8;i++){const d=document.createElement('span');d.className='dot';d.textContent=i+1;$('pulse').append(d);}
+function say(t){$('status').textContent=t;}
+function buttons(){
+ $('reference').disabled=phase!=='reference';$('masked').disabled=phase!=='masked';
+ $('same').disabled=$('different').disabled=phase!=='answer';$('next').disabled=phase!=='next';
+ $('stop').disabled=phase!=='playing';$('new').disabled=!['idle','done'].includes(phase);$('mode').disabled=!['idle','done'].includes(phase);
+}
+function clearAudio(){timers.forEach(clearTimeout);timers=[];oscillators.forEach(o=>{try{o.stop();}catch(e){}});oscillators=[];[...$('pulse').children].forEach(d=>d.classList.remove('active'));}
+function tone(midi,start){const o=ctx.createOscillator(),g=ctx.createGain();o.type='triangle';o.frequency.value=440*Math.pow(2,(midi-69)/12);g.gain.setValueAtTime(0,start);g.gain.linearRampToValueAtTime(Number($('volume').value),start+.025);g.gain.exponentialRampToValueAtTime(.0001,start+.39);o.connect(g).connect(ctx.destination);o.start(start);o.stop(start+.42);oscillators.push(o);}
+async function play(masked){
+ phase='playing';buttons();
+ try{ctx=ctx||new (window.AudioContext||window.webkitAudioContext)();await ctx.resume();if(ctx.state!=='running')throw Error('Áudio indisponível');}
+ catch(e){phase=masked?'masked':'reference';say('Não foi possível iniciar o áudio. Tente outro navegador ou habilite a reprodução sonora.');buttons();return;}
+ if(phase!=='playing')return;
+ const start=ctx.currentTime+.15;
+ current.notes.forEach((n,i)=>{
+  if(!masked||i<8-current.gap)tone(n,start+i*.5);
+  timers.push(setTimeout(()=>{[...$('pulse').children].forEach((d,j)=>d.classList.toggle('active',j===i));if(masked&&i>=8-current.gap)say('Continue mentalmente, acompanhando os pulsos.');},150+i*500));
+ });
+ if(masked){tone(current.probe,start+4.5);timers.push(setTimeout(()=>say('Nota de conferência: corresponde à última nota da frase?'),4650));}
+ say(masked?'Ouça o começo e continue quando o som desaparecer.':'Escute a frase inteira uma vez.');
+ timers.push(setTimeout(()=>{clearAudio();phase=masked?'answer':'masked';if(!masked)say('Agora reproduza mentalmente a frase uma vez; depois clique em “Ouvir com silêncio”.');buttons();},masked?5150:4250));
+}
+function next(){current=Audicao.trial(mode==='test'?4:gap);phase='reference';[...$('pulse').children].forEach((d,i)=>d.classList.toggle('hidden',i>=8-current.gap));say(`Tentativa ${records.length+1}/12. ${current.gap} notas finais ficarão em silêncio na segunda execução.`);buttons();}
+function answer(value){if(phase!=='answer')return;const correct=value===current.same;records.push({...current,responseSame:value,correct});
+ if(mode==='train'){const a=Audicao.adapt(gap,streak,correct);gap=a.gap;streak=a.streak;say(correct?'Acerto. Prepare a próxima frase.':`A conferência era ${current.same?'igual':'diferente'}. Na próxima tentativa o silêncio será menor, quando possível.`);$('score').textContent=`${records.filter(r=>r.correct).length}/${records.length} acertos nesta prática.`;}
+ else say('Resposta registrada. O resultado aparece ao concluir a sondagem.');
+ phase='next';
+ if(records.length===12){phase='done';const item={date:new Date().toISOString(),mode,correct:records.filter(r=>r.correct).length,total:records.length,records};history.push(item);try{localStorage.setItem('audicao-sessions',JSON.stringify(history));}catch(e){}historyView();say(`Sessão concluída: ${item.correct}/12 acertos. Este resultado isolado não demonstra aprendizagem ou transferência para composição.`);}
+ buttons();
+}
+$('new').onclick=()=>{records=[];gap=2;streak=0;mode=$('mode').value;$('score').textContent='';next();};
+$('reference').onclick=()=>play(false);$('masked').onclick=()=>play(true);$('same').onclick=()=>answer(true);$('different').onclick=()=>answer(false);$('next').onclick=next;
+$('stop').onclick=()=>{clearAudio();phase='reference';say('Áudio interrompido. Recomece esta tentativa pela frase completa.');buttons();};
+$('export').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(history,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='resultados-audicao.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+buttons();
+</script></html>
